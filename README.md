@@ -69,7 +69,7 @@ In `--bfac` mode:
 
 ## Other Flags
 
-```bash
+```
 --wrap N      residues per line, default 80
 --prefix STR  output filename prefix
 --svg         keep SVG when PDF export succeeds
