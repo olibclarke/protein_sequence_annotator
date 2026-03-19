@@ -85,5 +85,8 @@ In `--bfac` mode:
 
 ## Example Output
 
-**pLDDT:**
+**pLDDT coloring:**
 ![Example output](example_output.png)
+
+**B-factor coloring:**
+![Example output](bfac_example.png)
