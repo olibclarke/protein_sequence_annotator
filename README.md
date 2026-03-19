@@ -12,21 +12,15 @@ The output includes:
 ## Requirements
 
 - Python 3.9+
-- [`gemmi`](https://gemmi.readthedocs.io/)
+- `gemmi`
 - `mkdssp`
+
+(Both gemmi & mkdssp are included with CCP4, so if CCP4 is installed they should be available)
 
 Optional:
 - `rsvg-convert` or `cairosvg` for PDF export
 
 If PDF export is unavailable, the script falls back to SVG.
-
-## Install
-
-```bash
-python3 -m pip install gemmi
-```
-
-Make sure `mkdssp` is in your `PATH`.
 
 ## Basic Usage
 
