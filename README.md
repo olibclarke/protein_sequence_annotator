@@ -73,7 +73,7 @@ In `--bfac` mode:
 --wrap N      residues per line, default 80
 --prefix STR  output filename prefix
 --svg         keep SVG when PDF export succeeds
---bfac        color by raw B-factor instead of pLDDT
+--bfac        color by B-factor instead of pLDDT
 ```
 
 ## Notes
