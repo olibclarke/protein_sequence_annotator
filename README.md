@@ -82,3 +82,8 @@ In `--bfac` mode:
 - Very short secondary-structure fragments are suppressed:
   - helices shorter than 4 residues are shown as coil
   - strands shorter than 3 residues are shown as coil
+
+## Example Output
+
+**pLDDT:**
+![Example output](example_output.png)
