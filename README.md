@@ -1,0 +1,90 @@
+# Protein Sequence Annotator
+
+`protein_seq_annotator.py` renders a compact per-chain sequence figure from a `PDB` or `mmCIF` file.
+
+The output includes:
+- secondary-structure annotations above the sequence
+- dashed lines for unmodeled regions
+- residue numbering ticks
+- confidence/B-factor coloring
+- vector output as `PDF` by default, with `SVG` kept as an option/fallback
+
+## Requirements
+
+- Python 3.9+
+- [`gemmi`](https://gemmi.readthedocs.io/)
+- `mkdssp`
+
+Optional:
+- `rsvg-convert` or `cairosvg` for PDF export
+
+If PDF export is unavailable, the script falls back to SVG.
+
+## Install
+
+```bash
+python3 -m pip install gemmi
+```
+
+Make sure `mkdssp` is in your `PATH`.
+
+## Basic Usage
+
+Generate one output per polymer chain:
+
+```bash
+python3 protein_seq_annotator.py model.cif
+python3 protein_seq_annotator.py model.pdb
+```
+
+Keep the intermediate SVG as well as the PDF:
+
+```bash
+python3 protein_seq_annotator.py model.cif --svg
+```
+
+Select a chain explicitly:
+
+```bash
+python3 protein_seq_annotator.py model.cif --chain A
+python3 protein_seq_annotator.py model.cif --chain A,B
+```
+
+Write outputs to another directory:
+
+```bash
+python3 protein_seq_annotator.py model.cif -o out
+```
+
+## Coloring Modes
+
+Default behavior:
+- if non-zero B-factors are present, they are treated as `pLDDT`
+- AlphaFold colors are used: `<50`, `50-70`, `70-90`, `>90`
+
+Raw B-factor mode:
+
+```bash
+python3 protein_seq_ann1Gotator.py model.pdb --bfac
+```
+
+In `--bfac` mode:
+- colors use a blue -> light gray -> red scale
+- scaling is percentile-based
+- the legend shows actual B-factor values for the low, middle, and high anchors
+
+## Other Flags
+
+```bash
+--wrap N      residues per line, default 80
+--prefix STR  output filename prefix
+--svg         keep SVG when PDF export succeeds
+--bfac        color by raw B-factor instead of pLDDT
+```
+
+## Notes
+
+- `mkdssp` is required because the script uses it to derive or supplement secondary-structure assignments.
+- Very short secondary-structure fragments are suppressed:
+  - helices shorter than 4 residues are shown as coil
+  - strands shorter than 3 residues are shown as coil
