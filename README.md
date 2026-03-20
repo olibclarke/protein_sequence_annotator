@@ -94,4 +94,4 @@ In `--bfac` mode:
 ![Example output](example_output.png)
 
 **B-factor coloring:**
-![Example output](bfac_example.png)
+![Example output](3ch3_chainX.png)
