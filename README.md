@@ -56,7 +56,7 @@ python3 protein_seq_annotator.py model.cif -o out
 ## Coloring Modes
 
 Default behavior:
-- if non-zero B-factors are present, they are treated as `pLDDT`
+- if non-zero B-factors are present, they are treated as `pLDDT` by default
 - AlphaFold colors are used: `<50`, `50-70`, `70-90`, `>90`
 
 Raw B-factor mode:
