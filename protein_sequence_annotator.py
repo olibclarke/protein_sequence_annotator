@@ -138,10 +138,19 @@ def parse_args() -> argparse.Namespace:
         "--prefix",
         help="Output filename prefix. Defaults to the input stem.",
     )
-    parser.add_argument(
+    metric_group = parser.add_mutually_exclusive_group()
+    metric_group.add_argument(
         "--bfac",
         action="store_true",
         help="Color annotations by raw B-factor using a red-white-blue scale.",
+    )
+    metric_group.add_argument(
+        "--custom",
+        metavar="LABEL",
+        help=(
+            "Color annotations using the B-factor column as a custom metric with the "
+            "given legend label."
+        ),
     )
     parser.add_argument(
         "--label",
@@ -513,7 +522,12 @@ def interpolate_rgb(a: tuple[int, int, int], b: tuple[int, int, int], t: float) 
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
-def bfactor_color(value: Optional[float], ss: str, metric_summary: Optional[MetricSummary]) -> str:
+def bfactor_color(
+    value: Optional[float],
+    ss: str,
+    metric_summary: Optional[MetricSummary],
+    use_custom_palette: bool = False,
+) -> str:
     if (
         value is None
         or metric_summary is None
@@ -522,9 +536,9 @@ def bfactor_color(value: Optional[float], ss: str, metric_summary: Optional[Metr
         or metric_summary.high_anchor is None
     ):
         return DEFAULT_SS_COLORS.get(ss, DEFAULT_SS_COLORS["C"])
-    low = (0, 76, 255)
+    low = (217, 70, 239) if use_custom_palette else (0, 76, 255)
     mid = (229, 231, 235)
-    high = (220, 0, 0)
+    high = (34, 211, 238) if use_custom_palette else (220, 0, 0)
     if value <= metric_summary.mid_anchor:
         denom = metric_summary.mid_anchor - metric_summary.low_anchor
         t = 0.0 if denom <= 0 else (value - metric_summary.low_anchor) / denom
@@ -539,14 +553,15 @@ def metric_color(
     ss: str,
     use_bfactor: bool,
     metric_summary: Optional[MetricSummary],
+    use_custom_palette: bool = False,
 ) -> str:
     if use_bfactor:
-        return bfactor_color(value, ss, metric_summary)
+        return bfactor_color(value, ss, metric_summary, use_custom_palette)
     return af_color(value, ss)
 
 
 def summarize_metric(
-    residues: Sequence[ResidueInfo], use_bfactor: bool
+    residues: Sequence[ResidueInfo], metric_label: str, use_percentile_scale: bool
 ) -> Optional[MetricSummary]:
     values = [residue.plddt for residue in residues if residue.plddt is not None]
     if not values:
@@ -558,13 +573,13 @@ def summarize_metric(
         return sorted_values[index]
 
     return MetricSummary(
-        label="B-factor" if use_bfactor else "pLDDT",
+        label=metric_label,
         minimum=min(values),
         mean=sum(values) / len(values),
         maximum=max(values),
-        low_anchor=percentile(0.05) if use_bfactor else None,
-        mid_anchor=percentile(0.50) if use_bfactor else None,
-        high_anchor=percentile(0.95) if use_bfactor else None,
+        low_anchor=percentile(0.05) if use_percentile_scale else None,
+        mid_anchor=percentile(0.50) if use_percentile_scale else None,
+        high_anchor=percentile(0.95) if use_percentile_scale else None,
     )
 
 
@@ -734,12 +749,17 @@ def draw_clipped_metric_run(
     use_metric: bool,
     use_bfactor: bool,
     metric_summary: Optional[MetricSummary],
+    use_custom_palette: bool,
 ) -> None:
     parts.append(clip_path)
     parts.append(f'<g clip-path="url(#{clip_id})">')
     for idx in range(start_idx, end_idx + 1):
         color = metric_color(
-            chunk[idx].plddt if use_metric else None, code, use_bfactor, metric_summary
+            chunk[idx].plddt if use_metric else None,
+            code,
+            use_bfactor,
+            metric_summary,
+            use_custom_palette,
         )
         rx, rw = line_points(idx + 1, idx + 1, x0, cell)
         parts.append(draw_ss_fill_rect(rx, y, rw, height, color))
@@ -756,6 +776,7 @@ def render_svg(
     use_metric: bool,
     use_bfactor: bool,
     metric_summary: Optional[MetricSummary],
+    custom_label: Optional[str],
     show_labels: bool,
     page_row_start: int = 0,
     rows_per_page: Optional[int] = None,
@@ -763,6 +784,7 @@ def render_svg(
     page_count: int = 1,
     fixed_page_size: Optional[tuple[float, float]] = None,
 ) -> str:
+    use_custom_palette = bool(custom_label)
     wrap = max(20, wrap)
     cell = CELL_WIDTH
     track_h = 13.0
@@ -868,6 +890,7 @@ def render_svg(
                     use_metric,
                     use_bfactor,
                     metric_summary,
+                    use_custom_palette,
                 )
                 if continued_left:
                     parts.append(
@@ -896,6 +919,7 @@ def render_svg(
                     use_metric,
                     use_bfactor,
                     metric_summary,
+                    use_custom_palette,
                 )
                 if continued_left:
                     parts.append(
@@ -909,12 +933,20 @@ def render_svg(
                     )
             elif code == "M":
                 color = metric_color(
-                    current.plddt if use_metric else None, code, use_bfactor, metric_summary
+                    current.plddt if use_metric else None,
+                    code,
+                    use_bfactor,
+                    metric_summary,
+                    use_custom_palette,
                 )
                 parts.append(draw_missing(x, ss_y + 2.0, w, track_h, color))
             else:
                 color = metric_color(
-                    current.plddt if use_metric else None, code, use_bfactor, metric_summary
+                    current.plddt if use_metric else None,
+                    code,
+                    use_bfactor,
+                    metric_summary,
+                    use_custom_palette,
                 )
                 parts.append(draw_coil(x, ss_y + 2.0, w, track_h, color))
             run_id += 1
@@ -976,17 +1008,23 @@ def render_svg(
 
     if use_metric:
         metric_y = legend_y + 40.0
+        metric_label = metric_summary.label if metric_summary else "Metric"
+        metric_label_width = len(metric_label) * CHAR_WIDTH
         parts.append(
-            f'<text x="{x0 - 6:.2f}" y="{metric_y:.2f}" class="label">{xml(metric_summary.label if metric_summary else "Metric")}</text>'
+            f'<text x="{x0:.2f}" y="{metric_y:.2f}" text-anchor="start" class="label">{xml(metric_label)}</text>'
         )
-        key_x = x0 + 62.0
+        key_x = x0 + metric_label_width + 14.0
         if use_bfactor and metric_summary is not None:
             labels = [
                 f"<{metric_summary.low_anchor:.1f}",
                 f"{metric_summary.mid_anchor:.1f}",
                 f">{metric_summary.high_anchor:.1f}",
             ]
-            colors = ["#004cff", "#e5e7eb", "#dc0000"]
+            colors = (
+                ["#d946ef", "#e5e7eb", "#22d3ee"]
+                if use_custom_palette
+                else ["#004cff", "#e5e7eb", "#dc0000"]
+            )
             for idx, (color, label) in enumerate(zip(colors, labels)):
                 x = key_x + idx * 116.0
                 parts.append(
@@ -1062,6 +1100,7 @@ def process_chain(
     make_pdf: bool,
     keep_svg: bool,
     use_bfactor: bool,
+    custom_label: Optional[str],
     show_labels: bool,
     paginate: bool,
 ) -> None:
@@ -1071,7 +1110,10 @@ def process_chain(
     residues, has_metric = residue_records(structure, chain, use_bfactor)
     residue_numbers = sequence_number_map(chain, len(residues))
     assign_secondary_structure(structure, chain, residues, ss_overrides.get(chain_id))
-    metric_summary = summarize_metric(residues, use_bfactor) if has_metric else None
+    metric_label = custom_label or ("B-factor" if use_bfactor else "pLDDT")
+    metric_summary = (
+        summarize_metric(residues, metric_label, use_bfactor) if has_metric else None
+    )
     stem = f"{prefix}_chain{sanitize(chain_id)}"
     total_rows = math.ceil(len(residues) / max(20, wrap))
     effective_wrap = max(20, wrap)
@@ -1100,6 +1142,7 @@ def process_chain(
             has_metric,
             use_bfactor,
             metric_summary,
+            custom_label,
             show_labels,
             page_row_start=0,
             rows_per_page=rows_per_page,
@@ -1138,6 +1181,7 @@ def process_chain(
                 has_metric,
                 use_bfactor,
                 metric_summary,
+                custom_label,
                 show_labels,
                 page_row_start=page_idx * rows_per_page,
                 rows_per_page=rows_per_page,
@@ -1201,6 +1245,7 @@ def main() -> int:
             f"Available polymer chains: {', '.join(available_chain_ids)}"
         )
     prefix = args.prefix or input_path.stem
+    use_raw_metric = args.bfac or bool(args.custom)
     for chain_id in selected:
         process_chain(
             structure=structure,
@@ -1212,7 +1257,8 @@ def main() -> int:
             wrap=args.wrap,
             make_pdf=True,
             keep_svg=args.svg,
-            use_bfactor=args.bfac,
+            use_bfactor=use_raw_metric,
+            custom_label=args.custom,
             show_labels=args.label,
             paginate=args.paginate,
         )
