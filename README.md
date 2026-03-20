@@ -9,6 +9,9 @@ The output includes:
 - confidence/B-factor coloring
 - vector output as `PDF` by default, with `SVG` kept as an option/fallback
 
+## Caveat
+Written with the assistence of Codex/ChatGPT5.4; Tested against a few different structures, but there may still be bugs.
+
 ## Requirements
 
 - Python 3.9+
