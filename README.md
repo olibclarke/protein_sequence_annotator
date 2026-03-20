@@ -91,7 +91,7 @@ In `--bfac` mode:
 ## Example Output
 
 **pLDDT coloring:**
-![Example output](example_output.png)
+![Example output](af_example.png)
 
 **B-factor coloring with labels & continuation markers:**
 ![Example output](3ch3_chainX_update.png)
