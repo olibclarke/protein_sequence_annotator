@@ -160,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--paginate",
         action="store_true",
-        help="Split long outputs into multiple US-letter-friendly landscape pages.",
+        help="Split long outputs into multiple US-letter-friendly portrait pages.",
     )
     return parser.parse_args()
 
