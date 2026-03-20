@@ -77,6 +77,7 @@ In `--bfac` mode:
 --prefix STR  output filename prefix
 --svg         keep SVG when PDF export succeeds
 --bfac        color by B-factor instead of pLDDT
+--label       Add labels to strands and helices
 ```
 
 ## Notes
