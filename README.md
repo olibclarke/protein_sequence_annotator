@@ -73,11 +73,12 @@ In `--bfac` mode:
 ## Other Flags
 
 ```
---wrap N      residues per line, default 80
---prefix STR  output filename prefix
---svg         keep SVG when PDF export succeeds
---bfac        color by B-factor instead of pLDDT
+--wrap N      Residues per line, default 80
+--prefix STR  Output filename prefix
+--svg         Keep SVG when PDF export succeeds
+--bfac        Color by B-factor instead of pLDDT
 --label       Add labels to strands and helices
+--paginate    Make a multi page PDF (only works on MacOS currently)
 ```
 
 ## Notes
