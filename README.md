@@ -68,7 +68,7 @@ python3 protein_seq_ann1Gotator.py model.pdb --bfac
 In `--bfac` mode:
 - colors use a blue -> light gray -> red scale
 - scaling is percentile-based
-- the legend shows actual B-factor values for the low, middle, and high anchors
+- the legend shows actual B-factor values for the low, middle, and high thresholds
 
 ## Other Flags
 
