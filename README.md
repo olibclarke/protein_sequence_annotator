@@ -1,6 +1,6 @@
 # Protein Sequence Annotator
 
-`protein_seq_annotator.py` renders a compact per-chain sequence figure from a `PDB` or `mmCIF` file.
+`protein_seq_annotator.py` renders a compact per-chain sequence annotation figure from a `PDB` or `mmCIF` file.
 
 The output includes:
 - secondary-structure annotations above the sequence
