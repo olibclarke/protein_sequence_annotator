@@ -248,7 +248,7 @@ def run_dssp(input_path: Path, structure: gemmi.Structure) -> Dict[str, Dict[int
 def with_secondary_structure(
     input_path: Path, structure: gemmi.Structure
 ) -> tuple[gemmi.Structure, Dict[str, Dict[int, str]]]:
-    # Always try DSSP so it can supplement files that have helices but no sheets.
+    # Always try DSSP so it can supplement files that have incomplete HELIX/SHEET records.
     return structure, run_dssp(input_path, structure)
 
 
