@@ -160,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--paginate",
         action="store_true",
-        help="Split long outputs into multiple US-letter-friendly portrait pages.",
+        help="Split long outputs into multiple US-letter-friendly landscape pages.",
     )
     return parser.parse_args()
 
@@ -248,7 +248,7 @@ def run_dssp(input_path: Path, structure: gemmi.Structure) -> Dict[str, Dict[int
 def with_secondary_structure(
     input_path: Path, structure: gemmi.Structure
 ) -> tuple[gemmi.Structure, Dict[str, Dict[int, str]]]:
-    # Always try DSSP so it can supplement files that have incomplete HELIX/SHEET records.
+    # Always try DSSP so it can supplement files that have helices but no sheets.
     return structure, run_dssp(input_path, structure)
 
 
