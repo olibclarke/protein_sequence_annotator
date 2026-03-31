@@ -74,6 +74,7 @@ RIGHT_MARGIN = 28.0
 ROW_GAP = 4.0
 CHAR_WIDTH = 7.4
 CELL_WIDTH = 10.8
+MONO_FONT_STACK = '"DejaVu Sans Mono","Liberation Mono",Menlo,Monaco,"Courier New",monospace'
 
 
 @dataclass
@@ -83,6 +84,7 @@ class ResidueInfo:
     modeled: bool = False
     plddt: Optional[float] = None
     ss: str = "C"
+    has_dssp: bool = False
 
 
 @dataclass
@@ -196,9 +198,21 @@ def polymer_chains(model: gemmi.Model) -> List[gemmi.Chain]:
     return [chain for chain in model if is_polymer_chain(chain)]
 
 
+def prepare_structure(structure: gemmi.Structure, input_path: Path) -> gemmi.Structure:
+    # Normalize legacy PDB input so residues get sequential label_seq IDs before
+    # any sequence placement or DSSP mapping logic runs.
+    if input_path.suffix.lower() in {".pdb", ".ent"}:
+        structure.setup_entities()
+        try:
+            structure.assign_label_seq_id()
+        except AttributeError:
+            gemmi.assign_label_seq_id(structure, False)
+    return structure
+
+
 # Map DSSP's detailed states onto the simplified helix/strand/coil track.
 def dssp_code_to_track(code: str) -> str:
-    if code in {"H", "G", "I", "P"}:
+    if code in {"H", "P"}:
         return "H"
     if code in {"E", "B"}:
         return "E"
@@ -206,17 +220,15 @@ def dssp_code_to_track(code: str) -> str:
 
 
 def run_dssp(input_path: Path, structure: gemmi.Structure) -> Dict[str, Dict[int, str]]:
-    # Run DSSP on the original file when possible, or on a temporary PDB export
-    # for mmCIF input, then keep only the per-residue chain/index assignments.
+    # Run DSSP on a normalized temporary PDB export so numbering stays consistent
+    # between mmCIF and legacy PDB input.
     mkdssp = shutil.which("mkdssp")
     if not mkdssp:
         raise RuntimeError("mkdssp is required for secondary-structure annotation")
     with tempfile.TemporaryDirectory() as tmpdir:
         out = Path(tmpdir) / "annotated.dssp"
-        dssp_input = input_path
-        if input_path.suffix.lower() not in {".pdb", ".ent"}:
-            dssp_input = Path(tmpdir) / "input.pdb"
-            structure.write_pdb(str(dssp_input))
+        dssp_input = Path(tmpdir) / "input.pdb"
+        structure.write_pdb(str(dssp_input))
         subprocess.run(
             [mkdssp, str(dssp_input), str(out)],
             check=True,
@@ -239,9 +251,7 @@ def run_dssp(input_path: Path, structure: gemmi.Structure) -> Dict[str, Dict[int
                 seq_num = int(line[5:10])
             except ValueError:
                 continue
-            assignments.setdefault(chain_id, {})[seq_num] = dssp_code_to_track(
-                line[16].strip()
-            )
+            assignments.setdefault(chain_id, {})[seq_num] = line[16].strip() or "C"
         return assignments
 
 
@@ -264,12 +274,40 @@ def entity_sequence(structure: gemmi.Structure, chain: gemmi.Chain) -> List[str]
     return [aa1(code) for code in entity.full_sequence]
 
 
+def choose_position_basis(chain: gemmi.Chain, sequence_len: int) -> str:
+    # Pick one numbering space for the whole chain so residue placement and
+    # annotation mapping stay consistent.
+    label_positions = [
+        residue.label_seq
+        for residue in chain.get_polymer()
+        if residue.label_seq and 1 <= residue.label_seq <= sequence_len
+    ]
+    auth_positions = [
+        residue.seqid.num
+        for residue in chain.get_polymer()
+        if 1 <= residue.seqid.num <= sequence_len
+    ]
+    if label_positions and len(label_positions) == len(set(label_positions)):
+        return "label"
+    if auth_positions and len(auth_positions) == len(set(auth_positions)):
+        return "auth"
+    if label_positions:
+        return "label"
+    if auth_positions:
+        return "auth"
+    return "label"
+
+
 # Sequence bookkeeping: align modeled residues onto the full polymer sequence.
-def residue_position(residue: gemmi.Residue, sequence_len: int) -> Optional[int]:
-    if residue.label_seq and 1 <= residue.label_seq <= sequence_len:
-        return residue.label_seq
-    if 1 <= residue.seqid.num <= sequence_len:
-        return residue.seqid.num
+def residue_position(
+    residue: gemmi.Residue, sequence_len: int, basis: str
+) -> Optional[int]:
+    if basis == "label":
+        if residue.label_seq and 1 <= residue.label_seq <= sequence_len:
+            return residue.label_seq
+    else:
+        if 1 <= residue.seqid.num <= sequence_len:
+            return residue.seqid.num
     return None
 
 
@@ -294,31 +332,32 @@ def residue_records(
     # are modeled and attach the active metric (pLDDT or raw B-factor).
     sequence = entity_sequence(structure, chain)
     residues = [ResidueInfo(index=i + 1, aa=aa) for i, aa in enumerate(sequence)]
+    basis = choose_position_basis(chain, len(residues))
     has_metric = False
     for residue in chain.get_polymer():
-        pos = residue_position(residue, len(residues))
+        pos = residue_position(residue, len(residues), basis)
         if pos is None:
             continue
         item = residues[pos - 1]
-        item.modeled = True
         item.aa = aa1(residue.name)
+        item.modeled = True
         item.plddt = residue_bfactor(residue) if use_bfactor else residue_plddt(residue)
         has_metric = has_metric or item.plddt is not None
     return residues, has_metric
 
 
 def chain_position_maps(
-    chain: gemmi.Chain, sequence_len: int
+    chain: gemmi.Chain, sequence_len: int, basis: str
 ) -> tuple[Dict[int, int], Dict[int, int]]:
     # Build lookup tables from author numbering and label_seq numbering onto the
     # displayed sequence positions.
     auth_to_pos: Dict[int, int] = {}
     label_to_pos: Dict[int, int] = {}
     for residue in chain.get_polymer():
-        pos = residue_position(residue, sequence_len)
+        pos = residue_position(residue, sequence_len, basis)
         if pos is None:
             continue
-        auth_to_pos[residue.seqid.num] = pos
+        auth_to_pos.setdefault(residue.seqid.num, pos)
         if residue.label_seq:
             label_to_pos[residue.label_seq] = pos
     return auth_to_pos, label_to_pos
@@ -328,9 +367,10 @@ def sequence_number_map(chain: gemmi.Chain, sequence_len: int) -> List[int]:
     # Build the displayed residue numbering for each sequence position. Layout is
     # still driven by sequence position, but labels/ticks should follow the
     # author residue numbering when it exists.
+    basis = choose_position_basis(chain, sequence_len)
     anchors: List[tuple[int, int]] = []
     for residue in chain.get_polymer():
-        pos = residue_position(residue, sequence_len)
+        pos = residue_position(residue, sequence_len, basis)
         if pos is not None:
             anchors.append((pos, residue.seqid.num))
     if not anchors:
@@ -352,13 +392,55 @@ def sequence_number_map(chain: gemmi.Chain, sequence_len: int) -> List[int]:
     return numbers
 
 
+def expand_numbering_gaps(
+    residues: Sequence[ResidueInfo], residue_numbers: Sequence[int]
+) -> tuple[List[ResidueInfo], List[int]]:
+    # If deposited author numbering skips forward, surface that as an explicit
+    # unmodeled gap in the display by inserting placeholder X residues.
+    if not residues:
+        return [], []
+    expanded_residues: List[ResidueInfo] = []
+    expanded_numbers: List[int] = []
+    for idx, (residue, number) in enumerate(zip(residues, residue_numbers), start=1):
+        expanded_residues.append(
+            ResidueInfo(
+                index=len(expanded_residues) + 1,
+                aa=residue.aa,
+                modeled=residue.modeled,
+                plddt=residue.plddt,
+                ss=residue.ss,
+                has_dssp=residue.has_dssp,
+            )
+        )
+        expanded_numbers.append(number)
+        if idx == len(residues):
+            continue
+        next_number = residue_numbers[idx]
+        gap = next_number - number - 1
+        if gap <= 0:
+            continue
+        for missing_number in range(number + 1, next_number):
+            expanded_residues.append(
+                ResidueInfo(
+                    index=len(expanded_residues) + 1,
+                    aa="X",
+                    modeled=False,
+                    plddt=None,
+                    ss="M",
+                    has_dssp=False,
+                )
+            )
+            expanded_numbers.append(missing_number)
+    return expanded_residues, expanded_numbers
+
+
 def resolve_annotation_position(
     seq_num: int,
     auth_to_pos: Dict[int, int],
     label_to_pos: Dict[int, int],
     sequence_len: int,
 ) -> Optional[int]:
-    pos = label_to_pos.get(seq_num, auth_to_pos.get(seq_num, seq_num))
+    pos = auth_to_pos.get(seq_num, label_to_pos.get(seq_num, seq_num))
     return pos if 1 <= pos <= sequence_len else None
 
 
@@ -367,6 +449,14 @@ def apply_ranges(
 ) -> None:
     for pos in range(max(1, start), min(len(residues), end) + 1):
         residues[pos - 1].ss = code
+
+
+def supplement_ranges(
+    residues: List[ResidueInfo], start: int, end: int, code: str
+) -> None:
+    for pos in range(max(1, start), min(len(residues), end) + 1):
+        if residues[pos - 1].ss == "C" and not residues[pos - 1].has_dssp:
+            residues[pos - 1].ss = code
 
 
 def enforce_min_ss_lengths(residues: List[ResidueInfo]) -> None:
@@ -471,14 +561,16 @@ def assign_secondary_structure(
     dssp_assignments: Optional[Dict[int, str]] = None,
 ) -> None:
     chain_name = chain.name
-    auth_to_pos, label_to_pos = chain_position_maps(chain, len(residues))
+    basis = choose_position_basis(chain, len(residues))
+    auth_to_pos, label_to_pos = chain_position_maps(chain, len(residues), basis)
     if dssp_assignments:
         for seq_num, code in dssp_assignments.items():
             pos = resolve_annotation_position(
                 seq_num, auth_to_pos, label_to_pos, len(residues)
             )
             if pos is not None:
-                residues[pos - 1].ss = code
+                residues[pos - 1].has_dssp = True
+                residues[pos - 1].ss = dssp_code_to_track(code)
     for helix in structure.helices:
         if helix.start.chain_name != chain_name or helix.end.chain_name != chain_name:
             continue
@@ -489,7 +581,7 @@ def assign_secondary_structure(
             helix.end.res_id.seqid.num, auth_to_pos, label_to_pos, len(residues)
         )
         if start is not None and end is not None:
-            apply_ranges(residues, start, end, "H")
+            supplement_ranges(residues, start, end, "H")
     for sheet in structure.sheets:
         for strand in sheet.strands:
             if strand.start.chain_name != chain_name or strand.end.chain_name != chain_name:
@@ -501,7 +593,7 @@ def assign_secondary_structure(
                 strand.end.res_id.seqid.num, auth_to_pos, label_to_pos, len(residues)
             )
             if start is not None and end is not None:
-                apply_ranges(residues, start, end, "E")
+                supplement_ranges(residues, start, end, "E")
     for residue in residues:
         if not residue.modeled:
             residue.ss = "M"
@@ -598,6 +690,12 @@ def line_points(start: int, end: int, x0: float, cell: float) -> tuple[float, fl
     return x, w
 
 
+def numbering_contiguous(
+    residue_numbers: Sequence[int], left_pos: int, right_pos: int
+) -> bool:
+    return residue_numbers[right_pos - 1] == residue_numbers[left_pos - 1] + 1
+
+
 def row_bounds(
     residue_numbers: Sequence[int], wrap: int, row_start: int, row_end: int
 ) -> tuple[List[int], List[int]]:
@@ -686,18 +784,13 @@ def strand_clip_path(clip_id: str, x: float, y: float, width: float, height: flo
 
 
 def structure_label_x(code: str, x: float, width: float) -> float:
-    # Center labels on the full visible secondary-structure element span.
+    # Center labels on the full visible secondary-structure width. For strands,
+    # this is the midpoint from the left edge of the shaft to the arrow tip.
     return x + width / 2.0
 
 
 def structure_label_optical_offset(code: str, label: Optional[str]) -> float:
-    if code != "E" or not label:
-        return 0.0
-    # Greek beta labels read right-heavy; use a smaller correction once the
-    # numeric suffix grows to two digits.
-    suffix = label.split("-", 1)[-1]
-    digits = len(suffix)
-    return max(0.0, 4.0 - 1.5 * max(0, digits - 1))
+    return 0.0
 
 
 def draw_coil(x: float, y: float, width: float, height: float, fill: str) -> str:
@@ -816,13 +909,13 @@ def render_svg(
         f'viewBox="0 0 {width:.0f} {height:.0f}">',
         '<rect width="100%" height="100%" fill="white" />',
         '<style><![CDATA['
-        '.title{font:600 18px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#111827;}'
-        '.subtitle{font:12px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#4b5563;}'
-        '.label{font:11px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#374151;}'
-        '.sslabel{font:10px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#4b5563;}'
-        '.seq{font:12px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#111827;}'
-        '.seq-missing{font:12px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#9ca3af;}'
-        '.num{font:10px "Courier New","Liberation Mono",Menlo,Monaco,monospace;fill:#6b7280;}'
+        f'.title{{font:600 18px {MONO_FONT_STACK};fill:#111827;}}'
+        f'.subtitle{{font:12px {MONO_FONT_STACK};fill:#4b5563;}}'
+        f'.label{{font:11px {MONO_FONT_STACK};fill:#374151;}}'
+        f'.sslabel{{font:10px {MONO_FONT_STACK};fill:#4b5563;}}'
+        f'.seq{{font:12px {MONO_FONT_STACK};fill:#111827;}}'
+        f'.seq-missing{{font:12px {MONO_FONT_STACK};fill:#9ca3af;}}'
+        f'.num{{font:10px {MONO_FONT_STACK};fill:#6b7280;}}'
         ']]></style>',
         f'<text x="{x0:.1f}" y="28" class="title">{xml(source_name)} chain {xml(chain_id)}</text>',
     ]
@@ -967,8 +1060,9 @@ def render_svg(
                     )
                     xpos = structure_label_x(run.code, label_x, label_w)
                     xpos -= structure_label_optical_offset(run.code, run.label)
+                    label_id = f"sslabel_{sanitize(chain_id)}_{absolute_row}_{run_idx}"
                     parts.append(
-                        f'<text x="{xpos:.2f}" y="{label_y:.2f}" text-anchor="middle" class="sslabel">{xml(run.label)}</text>'
+                        f'<g id="{label_id}"><text x="{xpos:.2f}" y="{label_y:.2f}" text-anchor="middle" class="sslabel">{xml(run.label)}</text></g>'
                     )
         for offset, residue in enumerate(chunk):
             xpos = x0 + offset * cell + cell / 2.0
@@ -997,14 +1091,18 @@ def render_svg(
 
     legend_y = header_h + rows * row_h + 10.0
     neutral = "#8b949e"
-    parts.append(draw_helix(x0, legend_y, 26.0, 12.0, neutral))
-    parts.append(f'<text x="{x0 + 34:.2f}" y="{legend_y + 10:.2f}" class="label">helix</text>')
-    parts.append(draw_strand(x0 + 100, legend_y, 26.0, 12.0, neutral))
-    parts.append(f'<text x="{x0 + 134:.2f}" y="{legend_y + 10:.2f}" class="label">strand</text>')
-    parts.append(draw_coil(x0 + 200, legend_y, 26.0, 12.0, neutral))
-    parts.append(f'<text x="{x0 + 234:.2f}" y="{legend_y + 10:.2f}" class="label">coil</text>')
-    parts.append(draw_missing(x0 + 290, legend_y, 26.0, 12.0, "#666666"))
-    parts.append(f'<text x="{x0 + 324:.2f}" y="{legend_y + 10:.2f}" class="label">unmodeled</text>')
+    legend_x = x0
+    parts.append(draw_helix(legend_x, legend_y, 26.0, 12.0, neutral))
+    parts.append(f'<text x="{legend_x + 34:.2f}" y="{legend_y + 10:.2f}" class="label">helix</text>')
+    legend_x += 86.0
+    parts.append(draw_strand(legend_x, legend_y, 26.0, 12.0, neutral))
+    parts.append(f'<text x="{legend_x + 34:.2f}" y="{legend_y + 10:.2f}" class="label">strand</text>')
+    legend_x += 96.0
+    parts.append(draw_coil(legend_x, legend_y, 26.0, 12.0, neutral))
+    parts.append(f'<text x="{legend_x + 34:.2f}" y="{legend_y + 10:.2f}" class="label">coil</text>')
+    legend_x += 90.0
+    parts.append(draw_missing(legend_x, legend_y, 26.0, 12.0, "#666666"))
+    parts.append(f'<text x="{legend_x + 34:.2f}" y="{legend_y + 10:.2f}" class="label">unmodeled</text>')
 
     if use_metric:
         metric_y = legend_y + 40.0
@@ -1108,8 +1206,9 @@ def process_chain(
     # when a converter is available.
     chain = find_chain(structure[0], chain_id)
     residues, has_metric = residue_records(structure, chain, use_bfactor)
-    residue_numbers = sequence_number_map(chain, len(residues))
     assign_secondary_structure(structure, chain, residues, ss_overrides.get(chain_id))
+    residue_numbers = sequence_number_map(chain, len(residues))
+    residues, residue_numbers = expand_numbering_gaps(residues, residue_numbers)
     metric_label = custom_label or ("B-factor" if use_bfactor else "pLDDT")
     metric_summary = (
         summarize_metric(residues, metric_label, use_bfactor) if has_metric else None
@@ -1230,9 +1329,8 @@ def main() -> int:
     input_path = Path(args.input).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    structure, ss_overrides = with_secondary_structure(
-        input_path, gemmi.read_structure(str(input_path))
-    )
+    structure = prepare_structure(gemmi.read_structure(str(input_path)), input_path)
+    structure, ss_overrides = with_secondary_structure(input_path, structure)
     chains = polymer_chains(structure[0])
     if not chains:
         raise SystemExit("no polymer chains found")
