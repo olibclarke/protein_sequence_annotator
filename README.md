@@ -91,10 +91,10 @@ In `--bfac` mode:
 ## Example Output
 
 **pLDDT coloring:**
-![Example output](af_example.png)
+![Example output](./af_example.png)
 
 **B-factor coloring:**
-![Example output](3ch3_chainX_update.png)
+![Example output](./3ch3_chainX_update.png)
 
 **Custom coloring:**
-![Example output](3ch3_chainX.png)
+![Example output](./3ch3_chainX.png)
